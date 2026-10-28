@@ -1,0 +1,4 @@
+# Dependências do deploy no Vercel (função api/converter.py).
+pymupdf>=1.24,<2
+openpyxl>=3.1
+numpy>=1.26

@@ -104,10 +104,50 @@ def test_web(pdf):
     from pdf2vector.web import app
 
     c = TestClient(app)
-    assert c.get("/").status_code == 200
-    r = c.post("/converter", files={"arquivo": ("relatório.pdf", pdf.read_bytes(), "application/pdf")})
+    r = c.get("/")
+    assert r.status_code == 200 and "Gerar Excel" in r.text
+    r = c.post("/api/converter?nome=relatório.pdf&chunk=50", content=pdf.read_bytes(),
+               headers={"Content-Type": "application/pdf"})
     assert r.status_code == 200
-    assert r.headers["x-paginas"] == "2"
+    assert r.headers["x-paginas"] == "2" and r.headers["x-tabelas"] == "1"
+    assert "relat%C3%B3rio.xlsx" in r.headers["content-disposition"]
     assert r.content[:2] == b"PK"
-    r = c.post("/converter", files={"arquivo": ("x.pdf", b"nada", "application/pdf")})
-    assert r.status_code == 415
+    assert c.post("/api/converter", content=b"nada").status_code == 415
+    assert c.post("/api/converter?chunk=5", content=pdf.read_bytes()).status_code == 422
+
+
+def test_funcao_vercel(pdf):
+    """Sobe a função de api/converter.py num servidor HTTP real, como o Vercel faz."""
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import HTTPServer
+
+    spec = importlib.util.spec_from_file_location("funcao", RAIZ / "api" / "converter.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    srv = HTTPServer(("127.0.0.1", 0), mod.handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_port}/api/converter"
+    try:
+        req = urllib.request.Request(base + "?nome=x.pdf", data=pdf.read_bytes(), method="POST",
+                                     headers={"Content-Type": "application/pdf"})
+        with urllib.request.urlopen(req) as r:
+            assert r.status == 200 and r.headers["X-Paginas"] == "2"
+            assert r.read()[:2] == b"PK"
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(urllib.request.Request(base, data=b"oi", method="POST"))
+        assert e.value.code == 415
+        assert "PDF" in e.value.read().decode()
+    finally:
+        srv.shutdown()
+
+
+def test_compacta_quando_passa_do_limite(pdf):
+    from pdf2vector.servico import processar
+
+    _, h = processar(pdf.read_bytes(), {}, limite_resposta=10**9)
+    assert h["X-Compacta"] == "0"
+    with pytest.raises(Exception) as e:
+        processar(pdf.read_bytes(), {}, limite_resposta=100)
+    assert getattr(e.value, "status", None) == 413

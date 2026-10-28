@@ -9,7 +9,7 @@ description = "Recebe um PDF, extrai e vetoriza todo o conteúdo e gera uma plan
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "pymupdf>=1.24",
+    "pymupdf>=1.24,<2",  # 2.x puxa onnxruntime e estoura o limite do Vercel
     "openpyxl>=3.1",
     "numpy>=1.26",
 ]

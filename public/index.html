@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF para Excel</title>
+<meta name="description" content="Envie um PDF e baixe uma planilha Excel com todo o conteúdo do documento, vetorizado.">
+<style>
+  :root {
+    --bg: #f4f6f9; --card: #ffffff; --fg: #1b2430; --muted: #5d6b7b; --line: #dbe2ea;
+    --accent: #1f6f43; --accent-fg: #ffffff; --accent-soft: #e6f2eb; --erro: #b42318; --erro-soft: #fdecea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10151b; --card: #18202a; --fg: #e7edf3; --muted: #95a3b2; --line: #2a3542;
+      --accent: #3fb27f; --accent-fg: #0b1a12; --accent-soft: #16301f; --erro: #ff8a7a; --erro-soft: #3a1915;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 620px; margin: 0 auto; padding: 48px 16px; }
+  h1 { font-size: 1.6rem; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 28px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 24px; }
+
+  .drop { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+          border: 2px dashed var(--line); border-radius: 12px; padding: 36px 16px; cursor: pointer;
+          transition: border-color .15s, background .15s; }
+  .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .drop svg { width: 40px; height: 40px; color: var(--accent); }
+  .drop strong { font-size: 1.05rem; }
+  .drop span { color: var(--muted); font-size: .9rem; }
+  .arquivo { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: var(--bg);
+             display: none; justify-content: space-between; gap: 12px; font-size: .95rem; }
+  .arquivo.on { display: flex; }
+  .arquivo b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .arquivo small { color: var(--muted); white-space: nowrap; }
+
+  details { margin-top: 18px; }
+  summary { cursor: pointer; color: var(--muted); font-size: .95rem; }
+  .opcoes { display: grid; gap: 14px; margin-top: 14px; }
+  label { font-size: .95rem; }
+  .campo { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  input[type=number] { width: 96px; padding: 8px; border: 1px solid var(--line); border-radius: 8px;
+                       background: var(--bg); color: var(--fg); font: inherit; }
+  .check { display: flex; gap: 10px; align-items: flex-start; }
+  .check input { margin-top: 4px; accent-color: var(--accent); }
+  .dica { display: block; color: var(--muted); font-size: .85rem; }
+
+  button { margin-top: 22px; width: 100%; padding: 13px; border: 0; border-radius: 10px;
+           background: var(--accent); color: var(--accent-fg); font: 600 1rem system-ui, sans-serif; cursor: pointer; }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  .barra { height: 4px; margin-top: 14px; border-radius: 2px; background: var(--line); overflow: hidden; display: none; }
+  .barra.on { display: block; }
+  .barra i { display: block; height: 100%; width: 40%; background: var(--accent); animation: vai 1.1s ease-in-out infinite; }
+  @keyframes vai { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+  @media (prefers-reduced-motion: reduce) { .barra i { animation: none; width: 100%; opacity: .5; } }
+
+  .msg { margin-top: 14px; padding: 12px 14px; border-radius: 10px; display: none; font-size: .95rem; }
+  .msg.erro { display: block; background: var(--erro-soft); color: var(--erro); }
+
+  .resultado { display: none; margin-top: 22px; }
+  .resultado.on { display: block; }
+  .resultado h2 { font-size: 1.05rem; margin: 0 0 12px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .stat { background: var(--bg); border-radius: 10px; padding: 10px; text-align: center; }
+  .stat b { display: block; font-size: 1.3rem; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: .8rem; }
+  .baixar { display: block; margin-top: 14px; text-align: center; padding: 12px; border-radius: 10px;
+            border: 1px solid var(--accent); color: var(--accent); font-weight: 600; text-decoration: none; }
+  .nota { color: var(--muted); font-size: .85rem; margin-top: 10px; }
+
+  footer { margin-top: 24px; color: var(--muted); font-size: .85rem; text-align: center; }
+  @media (max-width: 480px) { .stats { grid-template-columns: repeat(2, 1fr); } main { padding-top: 28px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>PDF → Excel</h1>
+  <p class="sub">Envie um PDF e baixe uma planilha com tudo o que ele contém: texto por página,
+    tabelas, imagens, links, formulários, sumário e os vetores de cada trecho do texto.</p>
+
+  <div class="card">
+    <form id="form">
+      <label class="drop" id="drop" tabindex="0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 18v-6"/><path d="m9 15 3-3 3 3"/>
+        </svg>
+        <strong>Arraste o PDF aqui</strong>
+        <span>ou clique para escolher · até 4 MB</span>
+        <input id="arquivo" type="file" accept="application/pdf,.pdf" hidden>
+      </label>
+      <div class="arquivo" id="info"><b id="nome"></b><small id="tamanho"></small></div>
+
+      <details>
+        <summary>Opções</summary>
+        <div class="opcoes">
+          <div class="campo">
+            <label for="chunk">Palavras por trecho vetorizado
+              <span class="dica">Trechos menores dão buscas mais precisas.</span></label>
+            <input id="chunk" type="number" value="200" min="20" max="2000" step="10">
+          </div>
+          <label class="check"><input id="compacta" type="checkbox">
+            <span>Planilha compacta
+              <span class="dica">Deixa de fora a aba de formatação (fonte e cor de cada trecho).</span></span></label>
+        </div>
+      </details>
+
+      <button id="botao" type="submit" disabled>Gerar Excel</button>
+      <div class="barra" id="barra" aria-hidden="true"><i></i></div>
+      <div class="msg" id="msg" role="alert"></div>
+    </form>
+
+    <section class="resultado" id="resultado" aria-live="polite">
+      <h2 id="titulo-resultado">Planilha pronta</h2>
+      <div class="stats" id="stats"></div>
+      <a class="baixar" id="baixar" href="#">Baixar novamente</a>
+      <p class="nota" id="nota"></p>
+    </section>
+  </div>
+
+  <footer>O arquivo é processado e descartado; nada fica armazenado.</footer>
+</main>
+
+<script>
+const LIMITE = 4.4 * 1000 * 1000;
+const $ = (id) => document.getElementById(id);
+const drop = $("drop"), input = $("arquivo"), botao = $("botao");
+let arquivo = null, urlAnterior = null;
+
+function fmtBytes(n) {
+  return n < 1e6 ? (n / 1e3).toFixed(0) + " KB" : (n / 1e6).toFixed(1).replace(".", ",") + " MB";
+}
+function erro(texto) { const m = $("msg"); m.textContent = texto; m.className = "msg erro"; }
+function limparErro() { $("msg").className = "msg"; }
+
+function escolher(f) {
+  limparErro();
+  $("resultado").classList.remove("on");
+  if (!f) return;
+  if (f.type !== "application/pdf" && !/\.pdf$/i.test(f.name)) { erro("Escolha um arquivo .pdf."); return; }
+  arquivo = f;
+  $("nome").textContent = f.name;
+  $("tamanho").textContent = fmtBytes(f.size);
+  $("info").classList.add("on");
+  botao.disabled = false;
+  if (f.size > LIMITE) {
+    erro("Este PDF tem " + fmtBytes(f.size) + ". A versão online aceita até 4 MB; para arquivos maiores use a linha de comando do pdf2vector.");
+    botao.disabled = true;
+  }
+}
+
+input.addEventListener("change", () => escolher(input.files[0]));
+drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } });
+["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => escolher(e.dataTransfer.files[0]));
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!arquivo) return;
+  limparErro();
+  $("resultado").classList.remove("on");
+  botao.disabled = true;
+  botao.textContent = "Processando…";
+  $("barra").classList.add("on");
+
+  const params = new URLSearchParams({
+    nome: arquivo.name,
+    chunk: $("chunk").value || "200",
+    compacta: $("compacta").checked ? "1" : "0",
+  });
+  try {
+    const r = await fetch("/api/converter?" + params, {
+      method: "POST", headers: { "Content-Type": "application/pdf" }, body: arquivo,
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => null);
+      throw new Error(j && j.detail ? j.detail : "O servidor respondeu " + r.status + ".");
+    }
+    const blob = await r.blob();
+    const nomeXlsx = arquivo.name.replace(/\.pdf$/i, "") + ".xlsx";
+    if (urlAnterior) URL.revokeObjectURL(urlAnterior);
+    urlAnterior = URL.createObjectURL(blob);
+    const a = $("baixar");
+    a.href = urlAnterior; a.download = nomeXlsx;
+    a.click();
+    mostrar(r.headers, nomeXlsx, blob.size);
+  } catch (err) {
+    erro(err.message === "Failed to fetch" ? "Não foi possível falar com o servidor. Tente de novo." : err.message);
+  } finally {
+    botao.disabled = false;
+    botao.textContent = "Gerar Excel";
+    $("barra").classList.remove("on");
+  }
+});
+
+function mostrar(h, nome, tamanho) {
+  const n = (k) => Number(h.get(k) || 0).toLocaleString("pt-BR");
+  const itens = [
+    ["Páginas", n("X-Paginas")], ["Palavras", n("X-Palavras")],
+    ["Tabelas", n("X-Tabelas")], ["Imagens", n("X-Imagens")],
+    ["Links", n("X-Links")], ["Desenhos", n("X-Desenhos")],
+    ["Trechos", n("X-Chunks")], ["Dimensões", n("X-Dimensao")],
+  ];
+  $("stats").innerHTML = "";
+  for (const [rotulo, valor] of itens) {
+    const d = document.createElement("div");
+    d.className = "stat";
+    d.innerHTML = "<b></b><span></span>";
+    d.querySelector("b").textContent = valor;
+    d.querySelector("span").textContent = rotulo;
+    $("stats").appendChild(d);
+  }
+  $("titulo-resultado").textContent = nome + " (" + fmtBytes(tamanho) + ")";
+  $("nota").textContent = h.get("X-Compacta") === "1" && !$("compacta").checked
+    ? "A planilha saiu compacta (sem a aba de formatação) para caber no limite de download."
+    : "";
+  $("resultado").classList.add("on");
+}
+</script>
+</body>
+</html>

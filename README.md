@@ -59,14 +59,39 @@ pdf2vector contratos/*.pdf -o saida/
 Opções úteis: `--motor semantico`, `--chunk 300 --sobreposicao 50`, `--ocr`,
 `--sem-vetores`, `--sem-formatacao` (planilhas menores em documentos muito grandes).
 
-Aplicação web:
+Aplicação web (o mesmo frontend publicado no Vercel):
 
 ```bash
 uvicorn pdf2vector.web:app --reload
 ```
 
-Abra http://localhost:8000, envie o PDF e a planilha é baixada. A API fica em
-`POST /converter` (multipart, campo `arquivo`) e a documentação em `/docs`.
+Abra http://localhost:8000, arraste o PDF e a planilha é baixada. A API é
+`POST /api/converter` com o PDF no corpo da requisição e as opções na query
+(`nome`, `chunk`, `compacta`); o resumo volta nos cabeçalhos `X-Paginas`, `X-Tabelas` etc.
+
+```bash
+curl -X POST --data-binary @documento.pdf -H "Content-Type: application/pdf" "http://localhost:8000/api/converter?nome=documento.pdf" -o documento.xlsx
+```
+
+## Deploy no Vercel
+
+O repositório já está pronto para o Vercel:
+
+* `public/index.html` — o frontend, servido como site estático;
+* `api/converter.py` — função Python serverless que recebe o PDF e devolve o Excel;
+* `vercel.json` / `requirements.txt` / `.vercelignore` — configuração e dependências.
+
+Pelo painel: **Add New → Project**, importe o repositório `pdf2vector` do GitHub e clique em
+**Deploy** (não precisa mudar nenhuma configuração). Pela linha de comando:
+
+```bash
+npx vercel --prod
+```
+
+Limites da versão online (impostos pelo Vercel): PDF de até ~4 MB e planilha de até 4,5 MB.
+Se a planilha completa passar disso, ela é refeita automaticamente sem a aba **Formatação**.
+OCR e o motor semântico não estão disponíveis online (Tesseract e PyTorch não cabem na função);
+para isso, e para arquivos grandes, use a linha de comando ou o servidor local.
 
 Como biblioteca:
 
@@ -96,8 +121,11 @@ pdf2vector/
   vectorizer.py  # divisão em trechos + embeddings (hash ou semântico) + busca
   excel.py       # montagem da planilha (openpyxl)
   pipeline.py    # PDF → extração → vetorização → Excel
+  servico.py     # validação e conversão usadas pela API (local e Vercel)
   cli.py         # linha de comando
-  web.py         # aplicação web (FastAPI)
+  web.py         # servidor local (FastAPI)
+api/converter.py # função serverless do Vercel
+public/index.html# frontend
 ```
 
 ## Limites

@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pymupdf
 
@@ -99,11 +99,13 @@ def extract(
     tabelas: bool = True,
     desenhos: bool = True,
     max_desenhos_por_pagina: int = 5000,
+    progresso: Callable[[int, int], None] | None = None,
 ) -> DocumentData:
     """Lê o PDF (caminho ou bytes) e devolve todo o conteúdo estruturado.
 
     ``ocr=True`` aplica OCR (Tesseract) às páginas sem camada de texto,
-    típico de documentos escaneados.
+    típico de documentos escaneados. ``progresso(pagina, total)`` é chamado
+    a cada página lida.
     """
     if isinstance(source, (bytes, bytearray)):
         doc = pymupdf.open(stream=bytes(source), filetype="pdf")
@@ -122,6 +124,8 @@ def extract(
         fontes: dict[tuple, dict] = {}
         for page in doc:
             _pagina(page, out, fontes, ocr, ocr_idioma, tabelas, desenhos, max_desenhos_por_pagina)
+            if progresso:
+                progresso(page.number + 1, doc.page_count)
         out.fontes = sorted(fontes.values(), key=lambda f: (-f["ocorrencias"], f["fonte"]))
         out.metadados["total_caracteres"] = sum(p["caracteres"] for p in out.paginas)
         out.metadados["total_palavras"] = sum(p["palavras"] for p in out.paginas)

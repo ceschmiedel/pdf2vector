@@ -59,49 +59,53 @@ pdf2vector contratos/*.pdf -o saida/
 Opções úteis: `--motor semantico`, `--chunk 300 --sobreposicao 50`, `--ocr`,
 `--sem-vetores`, `--sem-formatacao` (planilhas menores em documentos muito grandes).
 
-Aplicação web (o mesmo frontend publicado no Vercel):
+Aplicação web:
 
 ```bash
 uvicorn pdf2vector.web:app --reload
 ```
 
-Abra http://localhost:8000, arraste o PDF e a planilha é baixada. A API é
-`POST /api/converter` com o PDF no corpo da requisição e as opções na query
-(`nome`, `chunk`, `compacta`); o resumo volta nos cabeçalhos `X-Paginas`, `X-Tabelas` etc.
+Abra http://localhost:8000, arraste o PDF e a planilha é baixada. É o mesmo site publicado
+no Vercel (veja abaixo). O servidor local também oferece uma API para automações:
+`POST /api/converter` com o PDF no corpo e as opções na query (`nome`, `chunk`, `compacta`);
+o resumo volta nos cabeçalhos `X-Paginas`, `X-Tabelas` etc.
 
 ```bash
 curl -X POST --data-binary @documento.pdf -H "Content-Type: application/pdf" "http://localhost:8000/api/converter?nome=documento.pdf" -o documento.xlsx
 ```
 
-## Deploy no Vercel
+## Site no Vercel: o processamento roda no navegador
 
-O repositório já está pronto para o Vercel:
+Funções serverless do Vercel aceitam no máximo 4,5 MB por requisição e têm tempo limitado,
+o que não serve para PDFs de milhares de páginas. Por isso o site publicado **roda o próprio
+pdf2vector dentro do navegador**, com [Pyodide](https://pyodide.org) (Python compilado para
+WebAssembly, que já inclui PyMuPDF e NumPy):
 
-* `public/index.html` — o frontend, servido como site estático;
-* `api/converter.py` — função Python serverless que recebe o PDF e devolve o Excel;
-* `vercel.json` / `requirements.txt` / `.vercelignore` — configuração e dependências.
+* sem limite de tamanho de arquivo nem de tempo: o limite é a memória do navegador;
+* o PDF não é enviado a nenhum servidor;
+* o Vercel só hospeda arquivos estáticos (sem custo de função).
 
-Pelo painel: **Add New → Project**, importe o repositório `pdf2vector` do GitHub e clique em
-**Deploy** (não precisa mudar nenhuma configuração). Pela linha de comando:
+Medido com um PDF de 2.000 páginas (texto + uma tabela por página): ~240 MB de memória,
+planilha de 6 MB. Na primeira visita o navegador baixa ~30 MB (Pyodide + PyMuPDF), que ficam
+em cache. Para PDFs muito grandes, marque **Planilha compacta**, que deixa de fora a aba de
+formatação por trecho.
+
+Arquivos do site:
+
+* `public/index.html` — a página;
+* `public/worker.js` — carrega o Pyodide e executa o pdf2vector fora da thread da página;
+* `public/vendor/` — wheels do openpyxl e et-xmlfile (Python puro);
+* `scripts/montar_web.sh` — build: copia os módulos Python para `public/py/`;
+* `vercel.json` — configuração (site estático, sem funções).
+
+Para publicar: **Add New → Project** no Vercel, importe o repositório `pdf2vector` e clique em
+**Deploy** (as configurações vêm do `vercel.json`). Ou, pela linha de comando:
 
 ```bash
 npx vercel --prod
 ```
 
-Limites da versão online (impostos pelo Vercel): PDF de até ~4 MB e planilha de até 4,5 MB.
-Se a planilha completa passar disso, ela é refeita automaticamente sem a aba **Formatação**.
-OCR e o motor semântico não estão disponíveis online (Tesseract e PyTorch não cabem na função);
-para isso, e para arquivos grandes, use a linha de comando ou o servidor local.
-
-Como biblioteca:
-
-```python
-from pdf2vector import converter
-
-xlsx_bytes, doc, vet = converter("documento.pdf", "documento.xlsx")
-for trecho, score in vet.buscar("prazo de pagamento", k=3):
-    print(score, trecho.pagina_inicial, trecho.texto[:80])
-```
+OCR e o motor semântico não rodam no navegador; para eles use a linha de comando.
 
 ## Testes
 
@@ -121,11 +125,11 @@ pdf2vector/
   vectorizer.py  # divisão em trechos + embeddings (hash ou semântico) + busca
   excel.py       # montagem da planilha (openpyxl)
   pipeline.py    # PDF → extração → vetorização → Excel
-  servico.py     # validação e conversão usadas pela API (local e Vercel)
+  servico.py     # validação e conversão usadas pela API local
   cli.py         # linha de comando
-  web.py         # servidor local (FastAPI)
-api/converter.py # função serverless do Vercel
-public/index.html# frontend
+  web.py         # servidor local (FastAPI): site + API
+public/          # site (roda o pdf2vector no navegador via Pyodide)
+scripts/         # build do site
 ```
 
 ## Limites

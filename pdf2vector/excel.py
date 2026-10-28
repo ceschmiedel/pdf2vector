@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.cell import WriteOnlyCell
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -20,6 +21,8 @@ MAX_LINHAS = 1_048_575
 _CAB_FONTE = Font(bold=True, color="FFFFFF")
 _CAB_FUNDO = PatternFill("solid", fgColor="1F4E78")
 _TITULO = Font(bold=True, size=14)
+_SUBTITULO = Font(bold=True, size=12)
+_NEGRITO = Font(bold=True)
 _QUEBRA = Alignment(wrap_text=True, vertical="top")
 
 COLUNAS_BBOX = ["x0", "y0", "x1", "y1"]
@@ -46,32 +49,44 @@ def _rotulo(chave: str) -> str:
     return " ".join(_ACENTOS.get(p, p) for p in chave.split("_")).capitalize()
 
 
+def _cab(ws, valores) -> None:
+    linha = []
+    for v in valores:
+        cell = WriteOnlyCell(ws, _limpo(v))
+        cell.font, cell.fill = _CAB_FONTE, _CAB_FUNDO
+        linha.append(cell)
+    ws.append(linha)
+
+
 def _aba(wb: Workbook, titulo: str, registros: list[dict], colunas: list[str],
          larguras: dict[str, int] | None = None, quebra: tuple[str, ...] = ()) -> None:
+    # Planilha em modo write-only: as linhas vão direto para o arquivo, sem
+    # manter todas as células na memória (essencial para PDFs de milhares de páginas).
     ws = wb.create_sheet(titulo)
-    ws.append([_rotulo(c) for c in colunas])
-    for cell in ws[1]:
-        cell.font, cell.fill = _CAB_FONTE, _CAB_FUNDO
-    for reg in registros[:MAX_LINHAS]:
-        ws.append([_limpo(reg.get(c, "")) for c in colunas])
-    if len(registros) > MAX_LINHAS:
-        ws.append([f"… {len(registros) - MAX_LINHAS} linhas omitidas (limite do Excel)"])
     larguras = larguras or {}
     for i, c in enumerate(colunas, start=1):
-        letra = get_column_letter(i)
-        ws.column_dimensions[letra].width = larguras.get(c, max(10, min(18, len(c) + 4)))
-        if c in quebra:
-            for cell in ws[letra][1:]:
-                cell.alignment = _QUEBRA
+        ws.column_dimensions[get_column_letter(i)].width = larguras.get(c, max(10, min(18, len(c) + 4)))
     ws.freeze_panes = "A2"
     if registros:
-        ws.auto_filter.ref = ws.dimensions
+        n = min(len(registros), MAX_LINHAS) + 1
+        ws.auto_filter.ref = f"A1:{get_column_letter(len(colunas))}{n}"
+    _cab(ws, [_rotulo(c) for c in colunas])
+    idx_quebra = {i for i, c in enumerate(colunas) if c in quebra}
+    for reg in registros[:MAX_LINHAS]:
+        linha = [_limpo(reg.get(c, "")) for c in colunas]
+        for i in idx_quebra:
+            cell = WriteOnlyCell(ws, linha[i])
+            cell.alignment = _QUEBRA
+            linha[i] = cell
+        ws.append(linha)
+    if len(registros) > MAX_LINHAS:
+        ws.append([f"… {len(registros) - MAX_LINHAS} linhas omitidas (limite do Excel)"])
 
 
 def build_workbook(doc: DocumentData, vet: Vetorizacao | None = None,
                    *, incluir_trechos: bool = True) -> Workbook:
-    wb = Workbook()
-    _resumo(wb.active, doc, vet)
+    wb = Workbook(write_only=True)
+    _resumo(wb.create_sheet("Resumo"), doc, vet)
 
     _aba(wb, "Metadados", [{"campo": _rotulo(k), "valor": v} for k, v in doc.metadados.items()],
          ["campo", "valor"], {"campo": 28, "valor": 70})
@@ -124,10 +139,13 @@ def build_workbook(doc: DocumentData, vet: Vetorizacao | None = None,
 
 
 def _resumo(ws, doc: DocumentData, vet: Vetorizacao | None) -> None:
-    ws.title = "Resumo"
-    ws["A1"] = f"Relatório do PDF: {doc.arquivo}"
-    ws["A1"].font = _TITULO
-    ws["A2"] = f"Gerado em {datetime.now():%d/%m/%Y %H:%M} por pdf2vector"
+    ws.column_dimensions["A"].width = 44
+    ws.column_dimensions["B"].width = 60
+    titulo = WriteOnlyCell(ws, _limpo(f"Relatório do PDF: {doc.arquivo}"))
+    titulo.font = _TITULO
+    ws.append([titulo])
+    ws.append([f"Gerado em {datetime.now():%d/%m/%Y %H:%M} por pdf2vector"])
+    ws.append([])
     m = doc.metadados
     linhas = [
         ("Páginas", m.get("paginas")),
@@ -154,11 +172,10 @@ def _resumo(ws, doc: DocumentData, vet: Vetorizacao | None) -> None:
         ]
     if doc.avisos:
         linhas.append(("Avisos", f"{len(doc.avisos)} (veja a aba Avisos)"))
-    for i, (k, v) in enumerate(linhas, start=4):
-        ws.cell(i, 1, k).font = Font(bold=True)
-        ws.cell(i, 2, _limpo(v if v is not None else ""))
-    ws.column_dimensions["A"].width = 44
-    ws.column_dimensions["B"].width = 60
+    for k, v in linhas:
+        rotulo = WriteOnlyCell(ws, k)
+        rotulo.font = _NEGRITO
+        ws.append([rotulo, _limpo(v if v is not None else "")])
 
 
 def _tabelas(wb: Workbook, doc: DocumentData) -> None:
@@ -166,46 +183,41 @@ def _tabelas(wb: Workbook, doc: DocumentData) -> None:
     aba própria para cada tabela (até 200), pronta para filtrar e calcular."""
     ws = wb.create_sheet("Tabelas")
     if not doc.tabelas:
-        ws["A1"] = "Nenhuma tabela detectada no documento."
+        ws.append(["Nenhuma tabela detectada no documento."])
         return
-    linha = 1
     for t in doc.tabelas:
-        c = ws.cell(linha, 1, f"Tabela {t['id']} — página {t['pagina']} "
-                              f"({t['linhas']} linhas × {t['colunas']} colunas)")
-        c.font = Font(bold=True, size=12)
-        linha += 1
+        titulo = WriteOnlyCell(ws, f"Tabela {t['id']} — página {t['pagina']} "
+                                   f"({t['linhas']} linhas × {t['colunas']} colunas)")
+        titulo.font = _SUBTITULO
+        ws.append([titulo])
         if t["cabecalho"]:
-            for j, v in enumerate(t["cabecalho"], start=1):
-                cell = ws.cell(linha, j, _limpo(v))
-                cell.font, cell.fill = _CAB_FONTE, _CAB_FUNDO
-            linha += 1
+            _cab(ws, t["cabecalho"])
             dados = t["dados"][1:] if t["dados"] and t["dados"][0] == t["cabecalho"] else t["dados"]
         else:
             dados = t["dados"]
         for row in dados:
-            for j, v in enumerate(row, start=1):
-                _celula(ws, linha, j, v)
-            linha += 1
-        linha += 1
+            ws.append([_celula(ws, v) for v in row])
+        ws.append([])
 
     for t in doc.tabelas[:200]:
         aba = wb.create_sheet(f"Tab{t['id']} p{t['pagina']}"[:31])
-        for i, row in enumerate(t["dados"], start=1):
-            for j, v in enumerate(row, start=1):
-                cell = _celula(aba, i, j, v) if i > 1 else aba.cell(i, j, _limpo(v))
-                if i == 1:
-                    cell.font, cell.fill = _CAB_FONTE, _CAB_FUNDO
         for j in range(1, (t["colunas"] or 0) + 1):
             aba.column_dimensions[get_column_letter(j)].width = 18
         aba.freeze_panes = "A2"
+        for i, row in enumerate(t["dados"]):
+            if i == 0:
+                _cab(aba, row)
+            else:
+                aba.append([_celula(aba, v) for v in row])
 
 
-def _celula(ws, linha: int, coluna: int, v):
+def _celula(ws, v):
     valor = _converter(v)
-    cell = ws.cell(linha, coluna, valor)
     if isinstance(valor, float) and isinstance(v, str) and v.strip().endswith("%"):
+        cell = WriteOnlyCell(ws, valor)
         cell.number_format = "0.0%"
-    return cell
+        return cell
+    return valor
 
 
 def _converter(v):
@@ -247,12 +259,10 @@ def _vetores(wb: Workbook, vet: Vetorizacao) -> None:
          {"palavras_chave": 40, "texto": 100}, quebra=("texto",))
 
     ws = wb.create_sheet("Vetores")
-    ws.append(["Chunk", "Página inicial", "Página final"] + [f"d{i}" for i in range(vet.dimensao)])
-    for cell in ws[1]:
-        cell.font, cell.fill = _CAB_FONTE, _CAB_FUNDO
+    ws.freeze_panes = "D2"
+    _cab(ws, ["Chunk", "Página inicial", "Página final"] + [f"d{i}" for i in range(vet.dimensao)])
     for c, v in zip(vet.chunks, vet.vetores):
         ws.append([c.id, c.pagina_inicial, c.pagina_final] + [round(float(x), 6) for x in v])
-    ws.freeze_panes = "D2"
 
 
 def write_excel(doc: DocumentData, vet: Vetorizacao | None, destino: str | Path | None = None,

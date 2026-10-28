@@ -106,6 +106,8 @@ def test_web(pdf):
     c = TestClient(app)
     r = c.get("/")
     assert r.status_code == 200 and "Gerar Excel" in r.text
+    assert c.get("/worker.js").status_code == 200
+    assert "def extract" in c.get("/py/extractor.py").text
     r = c.post("/api/converter?nome=relatório.pdf&chunk=50", content=pdf.read_bytes(),
                headers={"Content-Type": "application/pdf"})
     assert r.status_code == 200
@@ -116,31 +118,24 @@ def test_web(pdf):
     assert c.post("/api/converter?chunk=5", content=pdf.read_bytes()).status_code == 422
 
 
-def test_funcao_vercel(pdf):
-    """Sobe a função de api/converter.py num servidor HTTP real, como o Vercel faz."""
-    import threading
-    import urllib.error
-    import urllib.request
-    from http.server import HTTPServer
+def test_build_do_site_copia_modulos_do_navegador(tmp_path):
+    """O build do Vercel copia para public/py/ exatamente os módulos que o
+    worker.js carrega no Pyodide."""
+    import re
+    import shutil
+    import subprocess
 
-    spec = importlib.util.spec_from_file_location("funcao", RAIZ / "api" / "converter.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    srv = HTTPServer(("127.0.0.1", 0), mod.handler)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{srv.server_port}/api/converter"
-    try:
-        req = urllib.request.Request(base + "?nome=x.pdf", data=pdf.read_bytes(), method="POST",
-                                     headers={"Content-Type": "application/pdf"})
-        with urllib.request.urlopen(req) as r:
-            assert r.status == 200 and r.headers["X-Paginas"] == "2"
-            assert r.read()[:2] == b"PK"
-        with pytest.raises(urllib.error.HTTPError) as e:
-            urllib.request.urlopen(urllib.request.Request(base, data=b"oi", method="POST"))
-        assert e.value.code == 415
-        assert "PDF" in e.value.read().decode()
-    finally:
-        srv.shutdown()
+    raiz = tmp_path / "repo"
+    shutil.copytree(RAIZ / "pdf2vector", raiz / "pdf2vector")
+    shutil.copytree(RAIZ / "scripts", raiz / "scripts")
+    (raiz / "public").mkdir()
+    subprocess.run(["sh", str(raiz / "scripts" / "montar_web.sh")], check=True, capture_output=True)
+    copiados = sorted(f.stem for f in (raiz / "public" / "py").glob("*.py"))
+    worker = (RAIZ / "public" / "worker.js").read_text()
+    modulos = re.search(r"const MODULOS = \[(.*?)\]", worker).group(1)
+    assert copiados == sorted(re.findall(r'"(\w+)"', modulos))
+    for whl in re.findall(r'"([\w.-]+\.whl)"', worker):
+        assert (RAIZ / "public" / "vendor" / whl).exists(), whl
 
 
 def test_compacta_quando_passa_do_limite(pdf):

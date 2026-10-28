@@ -1,4 +1,5 @@
-"""Servidor local com o mesmo frontend e a mesma API do deploy no Vercel.
+"""Servidor local: serve o mesmo site publicado no Vercel (que processa o PDF
+no navegador) e, além dele, uma API HTTP para automações.
 
 Rodar com ``uvicorn pdf2vector.web:app --reload`` e abrir http://localhost:8000.
 """
@@ -9,23 +10,18 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .servico import ErroEntrada, processar
 
-LIMITE_MB = 100
-FRONTEND = Path(__file__).resolve().parents[1] / "public" / "index.html"
+LIMITE_MB = 2048
+PACOTE = Path(__file__).resolve().parent
+PUBLIC = PACOTE.parent / "public"
 
 app = FastAPI(title="pdf2vector", version=__version__,
               description="Recebe um PDF, vetoriza e devolve um Excel com o conteúdo completo.")
-
-
-@app.get("/", include_in_schema=False)
-def index() -> FileResponse:
-    if not FRONTEND.exists():
-        raise HTTPException(404, "Frontend não encontrado (public/index.html).")
-    return FileResponse(FRONTEND)
 
 
 @app.get("/saude")
@@ -45,3 +41,9 @@ async def converter_pdf(request: Request) -> Response:
         raise HTTPException(exc.status, str(exc)) from exc
     tipo = headers.pop("Content-Type")
     return Response(xlsx, media_type=tipo, headers=headers)
+
+
+# Os módulos que o navegador executa vêm direto do pacote, sem passo de build.
+app.mount("/py", StaticFiles(directory=PACOTE), name="py")
+if PUBLIC.is_dir():
+    app.mount("/", StaticFiles(directory=PUBLIC, html=True), name="site")
